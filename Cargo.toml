@@ -1,5 +1,5 @@
 [package]
-name = "3D_platformer_tutorial"
+name = "bevy_3d_platformer_tutorial"
 version = "0.1.0"
 edition = "2024"
 
