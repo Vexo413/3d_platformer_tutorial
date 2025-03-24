@@ -2,9 +2,10 @@ use bevy::{
     color::palettes::css,
     input::mouse::MouseMotion,
     prelude::*,
+    render::mesh::{Indices, Mesh, VertexAttributeValues},
     window::{CursorGrabMode, PrimaryWindow},
 };
-use bevy_rapier3d::prelude::*;
+use bevy_rapier3d::{na::Point3, prelude::*};
 
 fn main() {
     App::new()

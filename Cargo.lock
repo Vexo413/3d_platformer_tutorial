@@ -1150,6 +1150,7 @@ name = "bevy_tutorial"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bevy_gltf",
  "bevy_panorbit_camera",
  "bevy_rapier3d",
 ]
