@@ -1,21 +1,29 @@
+use avian3d::prelude::*;
 use bevy::{
     color::palettes::css,
     input::mouse::MouseMotion,
     prelude::*,
-    render::mesh::{Indices, Mesh, VertexAttributeValues},
+    render::mesh::Mesh,
     window::{CursorGrabMode, PrimaryWindow},
 };
-use bevy_rapier3d::{na::Point3, prelude::*};
+use bevy_skein::SkeinPlugin;
+use bevy_tnua::prelude::*;
+use bevy_tnua_avian3d::{TnuaAvian3dPlugin, TnuaAvian3dSensorShape};
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, RapierPhysicsPlugin::<NoUserData>::default()))
+        .add_plugins((
+            DefaultPlugins,
+            PhysicsPlugins::default(),
+            SkeinPlugin::default(),
+            TnuaAvian3dPlugin::new(Update),
+            TnuaControllerPlugin::default(),
+        ))
         .add_systems(Startup, setup)
         .add_systems(
             Update,
             (
-                manage_collisions,
-                manage_position,
+                manage_position.in_set(TnuaUserControlsSystemSet),
                 manage_rotation,
                 manage_cursor_lock,
             ),
@@ -26,36 +34,12 @@ fn main() {
         })
         .insert_resource(MouseSettings { sensitivity: 0.5 })
         .insert_resource(CursorState { grabbed: false })
-        .insert_resource(PlayerPhysics {
-            speed: 1.0,
-            ground_friction: 0.9,
-            air_friction: 0.95,
-            jump_force: 75.0,
-            gravity: 1.0,
-        })
+        .insert_resource(GameState { level: 1 })
         .run();
 }
 
 #[derive(Component)]
-struct Player {
-    velocity: Vec3,
-    grounded: bool,
-}
-
-#[derive(Component)]
 struct CameraArm;
-
-#[derive(Component)]
-struct GroundSensor;
-
-#[derive(Resource)]
-struct PlayerPhysics {
-    speed: f32,
-    ground_friction: f32,
-    air_friction: f32,
-    jump_force: f32,
-    gravity: f32,
-}
 
 #[derive(Resource)]
 struct MouseSettings {
@@ -67,52 +51,43 @@ struct CursorState {
     grabbed: bool,
 }
 
+#[derive(Resource)]
+struct GameState {
+    level: u32,
+}
+
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+struct Ground;
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
+    game_state: Res<GameState>,
 ) {
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(40.0, 1.0, 40.0))),
-        MeshMaterial3d(materials.add(StandardMaterial::from_color(css::WHITE))),
-        RigidBody::Fixed,
-        Collider::cuboid(20.0, 0.5, 20.0),
-        Transform::default(),
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(10.0, 0.25, 0.25))),
-        MeshMaterial3d(materials.add(StandardMaterial::from_color(css::BLUE))),
-        RigidBody::Fixed,
-        Collider::cuboid(5.0, 0.125, 0.125),
-        Transform::from_xyz(5.0, 0.625, 5.0),
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(2.0, 2.0, 2.0))),
-        MeshMaterial3d(materials.add(StandardMaterial::from_color(css::RED))),
-        RigidBody::Fixed,
-        Collider::cuboid(1.0, 1.0, 1.0),
-        Transform::from_xyz(10.0, 1.5, -5.0),
-    ));
+    match game_state.level {
+        1 => {
+            commands.spawn(SceneRoot(
+                asset_server.load(GltfAssetLabel::Scene(0).from_asset("levels.gltf")),
+            ));
+        }
+        _ => {}
+    }
 
     commands
         .spawn((
             Mesh3d(meshes.add(Capsule3d::new(1.0, 2.0))),
             MeshMaterial3d(materials.add(StandardMaterial::from_color(css::GREEN))),
-            RigidBody::KinematicPositionBased,
-            Collider::capsule_y(1.0, 1.0),
-            Transform::from_xyz(0.0, 50.0, 0.0),
-            KinematicCharacterController {
-                autostep: Some(CharacterAutostep {
-                    max_height: CharacterLength::Absolute(0.5),
-                    min_width: CharacterLength::Absolute(0.5),
-                    include_dynamic_bodies: true,
-                }),
-                ..Default::default()
-            },
-            Player {
-                velocity: Vec3::ZERO,
-                grounded: false,
-            },
+            Collider::capsule(1.0, 2.0),
+            Transform::from_xyz(0.0, 5.0, 0.0),
+            TnuaController::default(),
+            RigidBody::Dynamic,
+            TnuaAvian3dSensorShape(Collider::cylinder(0.24, 0.0)),
+            // Tnua can fix the rotation, but the character will still get rotated before it can do so.
+            // By locking the rotation we can prevent this.
+            LockedAxes::ROTATION_LOCKED,
         ))
         .with_children(|parent| {
             parent
@@ -120,96 +95,67 @@ fn setup(
                 .with_children(|parent| {
                     parent.spawn((Camera3d::default(), Transform::from_xyz(0.0, 1.0, 10.0)));
                 });
-            parent.spawn((
-                Collider::ball(0.1),
-                Sensor,
-                Transform::from_xyz(0.0, -2.1, 0.0),
-                GroundSensor,
-                ActiveEvents::COLLISION_EVENTS,
-                ActiveCollisionTypes::all(),
-            ));
         });
 }
 
-fn manage_collisions(
-    mut collision_events: EventReader<CollisionEvent>,
-    mut query: Query<&mut Player>,
-    sensor_query: Query<Entity, With<GroundSensor>>,
-) {
-    for event in collision_events.read() {
-        match event {
-            CollisionEvent::Started(entity1, entity2, _) => {
-                if sensor_query.get(*entity1).is_ok() || sensor_query.get(*entity2).is_ok() {
-                    if let Ok(mut player) = query.get_single_mut() {
-                        player.grounded = true;
-                    }
-                }
-            }
-            CollisionEvent::Stopped(entity1, entity2, _) => {
-                if sensor_query.get(*entity1).is_ok() || sensor_query.get(*entity2).is_ok() {
-                    if let Ok(mut player) = query.get_single_mut() {
-                        player.grounded = false;
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn manage_position(
-    time: Res<Time>,
-    mut query: Query<(&mut KinematicCharacterController, &mut Player, &Transform)>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    player_physics: Res<PlayerPhysics>,
+    mut query: Query<(&mut TnuaController, &mut Transform)>,
 ) {
-    let (mut controller, mut player, player_transform) = query.single_mut();
+    let Ok((mut controller, mut transform)) = query.get_single_mut() else {
+        return;
+    };
 
     let mut direction = Vec3::ZERO;
-    if keyboard.pressed(KeyCode::Space) && player.grounded {
-        player.velocity.y = player_physics.jump_force * time.delta_secs();
-    }
+
     if keyboard.pressed(KeyCode::KeyW) {
-        direction.z = -1.0;
+        direction = Vec3::NEG_Z;
     }
     if keyboard.pressed(KeyCode::KeyS) {
-        direction.z = 1.0;
+        direction = Vec3::Z;
     }
     if keyboard.pressed(KeyCode::KeyA) {
-        direction.x = -1.0;
+        direction = Vec3::NEG_X;
     }
     if keyboard.pressed(KeyCode::KeyD) {
-        direction.x = 1.0;
+        direction = Vec3::X;
     }
 
-    direction = direction.normalize_or_zero();
+    let rotated_direction = transform.rotation * direction.normalize_or_zero();
+    controller.basis(TnuaBuiltinWalk {
+        desired_velocity: rotated_direction * 20.0,
+        float_height: 2.0,
+        ..Default::default()
+    });
 
-    let rotated_direction = player_transform.rotation * direction;
-
-    player.velocity += rotated_direction * player_physics.speed * time.delta_secs();
-    if player.grounded {
-        player.velocity *= player_physics.ground_friction;
-    } else {
-        player.velocity *= player_physics.air_friction;
+    if keyboard.pressed(KeyCode::Space) {
+        controller.action(TnuaBuiltinJump {
+            height: 15.0,
+            ..Default::default()
+        });
     }
-    player.velocity.y -= player_physics.gravity * time.delta_secs();
-    controller.translation = Some(player.velocity);
+
+    if transform.translation.y < -20.0 {
+        transform.translation = Vec3::new(0.0, 5.0, 0.0)
+    }
 }
 
 fn manage_rotation(
     time: Res<Time>,
-    mut query: Query<&mut Transform, With<Player>>,
-    mut camera_query: Query<&mut Transform, (With<CameraArm>, Without<Player>)>,
+    mut player_query: Query<&mut Transform, With<TnuaController>>,
+    mut camera_query: Query<&mut Transform, (With<CameraArm>, Without<TnuaController>)>,
     mut mouse_motion_events: EventReader<MouseMotion>,
     mouse_settings: Res<MouseSettings>,
     cursor_state: Res<CursorState>,
 ) {
-    let mut player_transform = query.single_mut();
+    let mut player_transform = player_query.single_mut();
     if cursor_state.grabbed {
         if let Ok(mut camera_transform) = camera_query.get_single_mut() {
             for event in mouse_motion_events.read() {
                 let delta = event.delta;
                 player_transform
                     .rotate_y(-delta.x * mouse_settings.sensitivity * time.delta_secs());
+
                 camera_transform
                     .rotate_x(-delta.y * mouse_settings.sensitivity * time.delta_secs());
                 let pitch = camera_transform
