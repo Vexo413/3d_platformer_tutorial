@@ -1,17 +1,16 @@
 use avian3d::prelude::*;
 use bevy::{
-    color::palettes::css,
     input::mouse::MouseMotion,
     prelude::*,
-    render::mesh::Mesh,
     window::{CursorGrabMode, PrimaryWindow},
 };
 use bevy_skein::SkeinPlugin;
 use bevy_tnua::prelude::*;
-use bevy_tnua_avian3d::{TnuaAvian3dPlugin, TnuaAvian3dSensorShape};
-
+use bevy_tnua_avian3d::*;
 fn main() {
     App::new()
+        .register_type::<GameObject>()
+        .register_type::<Goal>()
         .add_plugins((
             DefaultPlugins,
             PhysicsPlugins::default(),
@@ -26,15 +25,17 @@ fn main() {
                 manage_position.in_set(TnuaUserControlsSystemSet),
                 manage_rotation,
                 manage_cursor_lock,
+                manage_collisions,
+                rotate_goal,
             ),
         )
         .insert_resource(AmbientLight {
-            brightness: 2000.0,
+            brightness: 2500.0,
             color: Color::WHITE,
         })
         .insert_resource(MouseSettings { sensitivity: 0.5 })
         .insert_resource(CursorState { grabbed: false })
-        .insert_resource(GameState { level: 1 })
+        .insert_resource(GameState { level: 0 })
         .run();
 }
 
@@ -53,40 +54,40 @@ struct CursorState {
 
 #[derive(Resource)]
 struct GameState {
-    level: u32,
+    level: usize,
 }
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-struct Ground;
+struct GameObject;
+
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+struct Goal;
 
 fn setup(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    // mut meshes: ResMut<Assets<Mesh>>,
+    // mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
     game_state: Res<GameState>,
 ) {
-    match game_state.level {
-        1 => {
-            commands.spawn(SceneRoot(
-                asset_server.load(GltfAssetLabel::Scene(0).from_asset("levels.gltf")),
-            ));
-        }
-        _ => {}
-    }
+    commands.spawn(SceneRoot(asset_server.load(
+        GltfAssetLabel::Scene(game_state.level).from_asset("levels.glb"),
+    )));
 
     commands
         .spawn((
-            Mesh3d(meshes.add(Capsule3d::new(1.0, 2.0))),
-            MeshMaterial3d(materials.add(StandardMaterial::from_color(css::GREEN))),
+            SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("player.glb"))),
+            //Mesh3d(meshes.add(Capsule3d::new(1.0, 2.0))),
+            /*MeshMaterial3d(
+                materials.add(StandardMaterial::from_color(css::GREEN.with_alpha(0.25))),
+            ),*/
             Collider::capsule(1.0, 2.0),
             Transform::from_xyz(0.0, 5.0, 0.0),
             TnuaController::default(),
             RigidBody::Dynamic,
-            TnuaAvian3dSensorShape(Collider::cylinder(0.24, 0.0)),
-            // Tnua can fix the rotation, but the character will still get rotated before it can do so.
-            // By locking the rotation we can prevent this.
+            TnuaAvian3dSensorShape(Collider::cylinder(0.99, 0.0)),
             LockedAxes::ROTATION_LOCKED,
         ))
         .with_children(|parent| {
@@ -121,22 +122,25 @@ fn manage_position(
         direction = Vec3::X;
     }
 
-    let rotated_direction = transform.rotation * direction.normalize_or_zero();
+    let rotated_direction;
+    if transform.translation.y < -20.0 {
+        transform.translation = Vec3::new(0.0, 5.0, 0.0);
+        transform.rotation = Quat::IDENTITY;
+        rotated_direction = Vec3::ZERO;
+    } else {
+        rotated_direction = transform.rotation * direction.normalize_or_zero();
+    }
     controller.basis(TnuaBuiltinWalk {
         desired_velocity: rotated_direction * 20.0,
-        float_height: 2.0,
+        float_height: 2.2,
         ..Default::default()
     });
 
     if keyboard.pressed(KeyCode::Space) {
         controller.action(TnuaBuiltinJump {
-            height: 15.0,
+            height: 10.0,
             ..Default::default()
         });
-    }
-
-    if transform.translation.y < -20.0 {
-        transform.translation = Vec3::new(0.0, 5.0, 0.0)
     }
 }
 
@@ -186,5 +190,42 @@ fn manage_cursor_lock(
         primary_window.cursor_options.grab_mode = CursorGrabMode::None;
         primary_window.cursor_options.visible = true;
         cursor_state.grabbed = false;
+    }
+}
+
+fn manage_collisions(
+    mut commands: Commands,
+    object_query: Query<Entity, With<GameObject>>,
+    mut player_query: Query<(Entity, &mut Transform), With<TnuaController>>,
+    goal_query: Query<Entity, With<Goal>>,
+    mut collision_started: EventReader<CollisionStarted>,
+    asset_server: Res<AssetServer>,
+    mut game_state: ResMut<GameState>,
+    mut time: ResMut<Time<Virtual>>,
+) {
+    for CollisionStarted(entity1, entity2) in collision_started.read() {
+        if (player_query.get(*entity1).is_ok() && goal_query.get(*entity2).is_ok())
+            || (player_query.get(*entity2).is_ok() && goal_query.get(*entity1).is_ok())
+        {
+            time.pause();
+            for entity in object_query.iter() {
+                commands.entity(entity).despawn_recursive();
+            }
+            game_state.level += 1;
+            commands.spawn(SceneRoot(asset_server.load(
+                GltfAssetLabel::Scene(game_state.level).from_asset("levels.glb"),
+            )));
+            if let Ok((_, mut transform)) = player_query.get_single_mut() {
+                transform.translation = Vec3::new(0.0, 5.0, 0.0);
+                transform.rotation = Quat::IDENTITY;
+            }
+            time.unpause();
+        }
+    }
+}
+
+fn rotate_goal(time: Res<Time>, mut query: Query<&mut Transform, With<Goal>>) {
+    if let Ok(mut transform) = query.get_single_mut() {
+        transform.rotate_y(5.0 * time.delta_secs());
     }
 }
