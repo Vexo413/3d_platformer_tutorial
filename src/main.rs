@@ -11,6 +11,7 @@ fn main() {
     App::new()
         .register_type::<GameObject>()
         .register_type::<Goal>()
+        .register_type::<Spike>()
         .add_plugins((
             DefaultPlugins,
             PhysicsPlugins::default(),
@@ -46,7 +47,6 @@ struct CameraArm;
 struct MouseSettings {
     sensitivity: f32,
 }
-
 #[derive(Resource)]
 struct CursorState {
     grabbed: bool,
@@ -64,6 +64,10 @@ struct GameObject;
 #[derive(Component, Reflect)]
 #[reflect(Component)]
 struct Goal;
+
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+struct Spike;
 
 fn setup(
     mut commands: Commands,
@@ -192,6 +196,7 @@ fn manage_cursor_lock(
         cursor_state.grabbed = false;
     }
 }
+
 
 fn manage_collisions(
     mut commands: Commands,
