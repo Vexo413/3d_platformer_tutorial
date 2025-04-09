@@ -1,12 +1,32 @@
-use avian3d::prelude::*;
-use bevy::{
-    input::mouse::MouseMotion,
-    prelude::*,
-    window::{CursorGrabMode, PrimaryWindow},
+use avian3d::{
+    PhysicsPlugins,
+    prelude::{Collider, CollisionStarted, LockedAxes, RigidBody},
 };
+use bevy::{
+    DefaultPlugins,
+    app::{App, Startup, Update},
+    asset::AssetServer,
+    color::Color,
+    input::{ButtonInput, mouse::MouseMotion},
+    math::{EulerRot, Quat, Vec3},
+    pbr::AmbientLight,
+    prelude::{
+        BuildChildren, Camera3d, ChildBuild, Commands, Component, DespawnRecursiveExt, Entity,
+        EventReader, IntoSystemConfigs, KeyCode, MouseButton, Query, ReflectComponent, Res, ResMut,
+        Resource, Transform, With, Without,
+    },
+    reflect::Reflect,
+    scene::SceneRoot,
+    time::{Time, Virtual},
+    window::{CursorGrabMode, PrimaryWindow, Window},
+};
+use bevy_gltf::GltfAssetLabel;
 use bevy_skein::SkeinPlugin;
-use bevy_tnua::prelude::*;
-use bevy_tnua_avian3d::*;
+use bevy_tnua::{
+    TnuaUserControlsSystemSet,
+    prelude::{TnuaBuiltinJump, TnuaBuiltinWalk, TnuaController, TnuaControllerPlugin},
+};
+use bevy_tnua_avian3d::{TnuaAvian3dPlugin, TnuaAvian3dSensorShape};
 fn main() {
     App::new()
         .register_type::<GameObject>()
@@ -196,7 +216,6 @@ fn manage_cursor_lock(
         cursor_state.grabbed = false;
     }
 }
-
 
 fn manage_collisions(
     mut commands: Commands,
